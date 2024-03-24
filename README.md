@@ -1,3 +1,7 @@
+This is my adaptation of Marco Gabriel's config file for the SKR V1.3 motherboard to control a Creality CR10 Mini.
+
+The below is his original readme text.
+====================================
 # klipper-config-skr-1.3-creality-cr-10s
 Klipper Configuration for a SKR 1.3 Mainboard in a Creality CR-10S 3D Printer
 

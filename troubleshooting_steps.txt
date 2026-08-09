@@ -1,0 +1,447 @@
+Send: PROBE_ACCURACY SAMPLES=20
+Recv: // PROBE_ACCURACY at X:189.000 Y:117.000 Z:10.000 (samples=20 retract=5.000 speed=3.0 lift_speed=3.0)
+Recv: // probe at 189.000,117.000 is z=0.167500
+Recv: // probe at 189.000,117.000 is z=0.250000
+Recv: // probe at 189.000,117.000 is z=0.310000
+Recv: // probe at 189.000,117.000 is z=0.275000
+Recv: // probe at 189.000,117.000 is z=0.335000
+Recv: // probe at 189.000,117.000 is z=0.297500
+Recv: // probe at 189.000,117.000 is z=0.290000
+Recv: // probe at 189.000,117.000 is z=0.275000
+Recv: // probe at 189.000,117.000 is z=0.342500
+Recv: // probe at 189.000,117.000 is z=0.307500
+Recv: // probe at 189.000,117.000 is z=0.307500
+Recv: // probe at 189.000,117.000 is z=0.315000
+Recv: // probe at 189.000,117.000 is z=0.300000
+Recv: // probe at 189.000,117.000 is z=0.307500
+Recv: // probe at 189.000,117.000 is z=0.347500
+Recv: // probe at 189.000,117.000 is z=0.342500
+Recv: // probe at 189.000,117.000 is z=0.307500
+Recv: // probe at 189.000,117.000 is z=0.272500
+Recv: // probe at 189.000,117.000 is z=0.275000
+Recv: // probe at 189.000,117.000 is z=0.337500
+Recv: // probe accuracy results: maximum 0.347500, minimum 0.167500, range 0.180000, average 0.298125, median 0.307500, standard deviation 0.039858
+
+Answer from ChatGPT:
+The result is still unusable and is almost identical to the old mount:
+
+* Old range: `0.1825 mm`
+* New range: `0.1800 mm`
+* Even excluding the first two unusually low readings, the remaining range is still `0.0750 mm`.
+
+So the bracket was probably **not the main cause**. Do not run `PROBE_CALIBRATE` or create a bed mesh yet.
+
+## First: repeat under controlled settings
+
+Your output shows:
+
+```text
+retract=5.000
+speed=3.0
+```
+
+A 5 mm sample retract is larger than Klipper’s 2 mm default. That much Z movement can expose backlash, binding, cable pulling, or inconsistent redeployment. Klipper permits changing probe speed and retract distance directly in the test command. ([Klipper Documentation][1])
+
+Heat the printer consistently:
+
+```gcode
+M140 S60
+M104 S150
+M190 S60
+M109 S150
+```
+
+Wait five minutes, ensure the nozzle is clean, then run:
+
+```gcode
+G28
+G90
+G1 X189 Y117 Z10 F6000
+PROBE_ACCURACY SAMPLES=20 PROBE_SPEED=1.0 SAMPLE_RETRACT_DIST=2.0 LIFT_SPEED=5.0
+```
+
+Do not alter the stored configuration before running this test.
+
+### How to interpret it
+
+* Range `≤0.025 mm`: acceptable; continue calibration.
+* Range `0.025–0.050 mm`: improved, but still not reliable enough.
+* Range `>0.050 mm`: hardware, wiring or Z-mechanics problem remains.
+
+Klipper recommends investigating the probe or printer mechanics when the range exceeds approximately `0.025 mm`. ([Klipper Documentation][2])
+
+## If it remains bad: test the probe signal
+
+Move the toolhead safely away from the bed first:
+
+```gcode
+G28
+G90
+G1 Z30 F600
+```
+
+Then:
+
+```gcode
+BLTOUCH_DEBUG COMMAND=reset
+BLTOUCH_DEBUG COMMAND=pin_down
+BLTOUCH_DEBUG COMMAND=touch_mode
+QUERY_PROBE
+```
+
+It should report:
+
+```text
+probe: open
+```
+
+Now gently push the probe pin upward slightly and hold it while entering:
+
+```gcode
+QUERY_PROBE
+```
+
+It should report:
+
+```text
+probe: TRIGGERED
+```
+
+Finally:
+
+```gcode
+BLTOUCH_DEBUG COMMAND=pin_up
+```
+
+Klipper uses this test to verify that the control and sensor signals are behaving correctly. Some clones do not properly support `touch_mode`, so a failed test does not automatically prove that the wiring is wrong—but it tells us not to enable touch-mode probing. ([Klipper Documentation][2])
+
+## Inspect these mechanical points
+
+Power the printer off first.
+
+Check:
+
+* The probe body cannot move inside the new bracket.
+* The entire hotend carriage has no rocking movement.
+* The bed does not rock on its wheels.
+* The probe pin is straight and slides freely.
+* The probe cable is not pulling on the probe when Z moves.
+* The probe connector pins are fully seated.
+* The Z lead-screw coupler screws are tight.
+* The X gantry does not move vertically when the nozzle is gently pressed.
+* The probe pin repeatedly drops to the same visible position.
+
+Do not casually tighten the screw on top of the probe. Klipper notes that an incorrectly positioned top screw or displaced magnetic core can prevent reliable pin movement; adjustment is appropriate only when deployment is visibly sticky or inconsistent. ([Klipper Documentation][2])
+
+## Check your Klipper configuration
+
+The sensor line will commonly look similar to:
+
+```ini
+sensor_pin: ^<your_pin>
+```
+
+Most BLTouch-type probes require the pull-up indicated by `^`. Do not change the actual pin name or polarity blindly, but check whether the `^` is present. ([Klipper Documentation][2])
+
+Also look for these settings:
+
+```ini
+speed:
+sample_retract_dist:
+stow_on_each_sample:
+probe_with_touch_mode:
+pin_up_reports_not_triggered:
+pin_up_touch_mode_reports_triggered:
+```
+
+Do not change the last two clone-related reporting settings without completing Klipper’s prescribed signal tests; incorrect values can increase probing time and collision risk. ([Klipper Documentation][2])
+
+## Optional clone-mode comparison
+
+Only when the manual `QUERY_PROBE` test works correctly, you can temporarily try:
+
+```ini
+[bltouch]
+# existing settings remain
+stow_on_each_sample: False
+probe_with_touch_mode: True
+```
+
+Then:
+
+```gcode
+RESTART
+G28
+G90
+G1 X189 Y117 Z10 F6000
+PROBE_ACCURACY SAMPLES=20 PROBE_SPEED=1.0 SAMPLE_RETRACT_DIST=2.0 LIFT_SPEED=5.0
+```
+
+Leaving the pin deployed can remove variation caused by repeatedly deploying and stowing it. However, Klipper warns that some clones actually become **less accurate** in touch mode, so compare the before-and-after results rather than assuming it is better. Also ensure the deployed pin has enough clearance during horizontal movements. ([Klipper Documentation][2])
+
+If the controlled test still gives around `0.18 mm`, the most likely remaining causes are the probe itself, its signal wiring, or play/binding in the Z motion—not the printed bracket. Paste the new accuracy result together with your complete `[bltouch]` section.
+
+[1]: https://www.klipper3d.org/Config_Reference.html?h=probe "Configuration reference - Klipper documentation"
+[2]: https://www.klipper3d.org/BLTouch.html "BL-Touch - Klipper documentation"
+
+
+Follow-up prompt:
+
+Send: PROBE_ACCURACY SAMPLES=20 PROBE_SPEED=1.0 SAMPLE_RETRACT_DIST=2.0 LIFT_SPEED=5.0
+Recv: // PROBE_ACCURACY at X:189.000 Y:117.000 Z:10.000 (samples=20 retract=2.000 speed=1.0 lift_speed=5.0)
+Recv: // probe at 189.000,117.000 is z=0.425000
+Recv: // probe at 189.000,117.000 is z=0.317500
+Recv: // probe at 189.000,117.000 is z=0.452500
+Recv: // probe at 189.000,117.000 is z=0.377500
+Recv: // probe at 189.000,117.000 is z=0.435000
+Recv: // probe at 189.000,117.000 is z=0.277500
+Recv: // probe at 189.000,117.000 is z=0.402500
+Recv: // probe at 189.000,117.000 is z=0.355000
+Recv: // probe at 189.000,117.000 is z=0.435000
+Recv: // probe at 189.000,117.000 is z=0.347500
+Recv: // probe at 189.000,117.000 is z=0.415000
+Recv: // probe at 189.000,117.000 is z=0.432500
+Recv: // probe at 189.000,117.000 is z=0.380000
+Recv: // probe at 189.000,117.000 is z=0.287500
+Recv: // probe at 189.000,117.000 is z=0.475000
+Recv: // probe at 189.000,117.000 is z=0.415000
+Recv: // probe at 189.000,117.000 is z=0.302500
+Recv: // probe at 189.000,117.000 is z=0.417500
+Recv: // probe at 189.000,117.000 is z=0.445000
+Recv: // probe at 189.000,117.000 is z=0.427500
+Recv: // probe accuracy results: maximum 0.475000, minimum 0.277500, range 0.197500, average 0.391125, median 0.415000, standard deviation 0.056632
+
+
+Send: BLTOUCH_DEBUG COMMAND=reset
+Recv: // Unknown command:"BLTOUCH_DEBUG"
+
+
+Answer from ChatGPT:
+
+The second test is still unusable:
+
+* **Range:** `0.1975 mm`
+* Recommended maximum for normal mesh levelling: about `0.025 mm`
+* So the result is nearly **8× too variable**. Do not run `PROBE_CALIBRATE` yet. ([Klipper Documentation][1])
+
+The `Unknown command: BLTOUCH_DEBUG` message now reveals an important configuration issue: your printer is currently using the 3DTouch as a generic `[probe]`, controlled through `[servo probe_servo]` and the `PROBE_DEPLOY`/`PROBE_STOW` macros. `BLTOUCH_DEBUG` exists only when Klipper’s native `[bltouch]` section is enabled. ([Klipper Documentation][2])
+
+Your current generic servo arrangement may be contributing to inconsistent deployment. The next step is to convert it to Klipper’s native BLTouch driver.
+
+## 1. Back up `printer.cfg`
+
+Save a copy before editing.
+
+## 2. Disable the old probe sections
+
+Comment out or remove these complete sections:
+
+```ini
+[servo probe_servo]
+```
+
+```ini
+[probe]
+```
+
+```ini
+[gcode_macro PROBE_DEPLOY]
+```
+
+```ini
+[gcode_macro PROBE_STOW]
+```
+
+```ini
+[gcode_macro PROBE_RESET]
+```
+
+You also previously had a macro named `PROBE_HOME_Z` that called `PROBE_RESET` and `PROBE_STOW`. Disable that macro for now as well. Native `[bltouch]` controls deployment, retraction and reset itself.
+
+Do not leave both `[probe]` and `[bltouch]` active. Klipper defines `[bltouch]` as the replacement for the generic `[probe]` section and creates the same `probe:z_virtual_endstop`. ([Klipper Documentation][3])
+
+## 3. Add the native BLTouch section
+
+Your existing wiring was:
+
+* Sensor signal: `P1.25`
+* Servo/control signal: `P2.0`
+
+Add:
+
+```ini
+[bltouch]
+sensor_pin: ^P1.25
+control_pin: P2.0
+
+x_offset: -39.0
+y_offset: -7.0
+z_offset: 0.0
+
+speed: 1.0
+lift_speed: 5.0
+samples: 1
+sample_retract_dist: 2.0
+
+stow_on_each_sample: True
+probe_with_touch_mode: False
+```
+
+The `^` retains the pull-up from your existing working sensor configuration. Klipper documents that most BLTouch devices require that pull-up on the sensor pin. ([Klipper Documentation][3])
+
+`z_offset: 0.0` is only a temporary value allowing Klipper to start. Do not print with it; it will eventually be replaced by `PROBE_CALIBRATE`.
+
+## 4. Keep the Z virtual endstop
+
+Your `[stepper_z]` should retain:
+
+```ini
+[stepper_z]
+endstop_pin: probe:z_virtual_endstop
+```
+
+There must not be a `position_endstop:` line in `[stepper_z]` when using the probe virtual endstop. ([Klipper Documentation][3])
+
+Keep your corrected safe-home position:
+
+```ini
+[safe_z_home]
+home_xy_position: 189,117
+speed: 50
+z_hop: 10
+z_hop_speed: 5
+```
+
+## 5. Restart Klipper
+
+Run:
+
+```gcode
+RESTART
+```
+
+Do **not** home Z yet.
+
+The 3DTouch should perform its startup self-test: the pin moves up and down, then retracts with the red LED illuminated. A flashing LED or pin remaining deployed indicates a probe, wiring or configuration fault. ([Klipper Documentation][4])
+
+## 6. Verify native control
+
+The following commands should now be recognised:
+
+```gcode
+BLTOUCH_DEBUG COMMAND=reset
+BLTOUCH_DEBUG COMMAND=pin_down
+```
+
+Confirm:
+
+* Pin deploys fully.
+* Red LED changes appropriately.
+* There is no flashing error.
+
+Then:
+
+```gcode
+BLTOUCH_DEBUG COMMAND=pin_up
+```
+
+Confirm the pin retracts fully.
+
+Repeat this five or six times:
+
+```gcode
+BLTOUCH_DEBUG COMMAND=pin_down
+BLTOUCH_DEBUG COMMAND=pin_up
+```
+
+Watch whether the pin ever deploys slowly, incompletely or to a visibly different height.
+
+## 7. Test the sensor input
+
+Raise the gantry manually first with the printer powered off, so the nozzle is far from the bed. Power it back on and restart Klipper.
+
+Run:
+
+```gcode
+BLTOUCH_DEBUG COMMAND=pin_down
+BLTOUCH_DEBUG COMMAND=touch_mode
+QUERY_PROBE
+```
+
+With the pin untouched, it should report:
+
+```text
+probe: open
+```
+
+Gently push the pin upward with your fingernail and hold it, then run:
+
+```gcode
+QUERY_PROBE
+```
+
+It should report:
+
+```text
+probe: TRIGGERED
+```
+
+Finish with:
+
+```gcode
+BLTOUCH_DEBUG COMMAND=pin_up
+```
+
+This is Klipper’s prescribed control-pin and sensor-pin test. Some clones do not correctly support `QUERY_PROBE` in touch mode, so do not change clone compatibility flags merely because this test behaves strangely; record the exact result first. ([Klipper Documentation][4])
+
+## 8. Perform a safe homing test
+
+Keep your hand by the printer’s power switch.
+
+First home only X and Y:
+
+```gcode
+G28 X Y
+```
+
+Then initiate Z homing:
+
+```gcode
+G28 Z
+```
+
+While the gantry descends, gently trigger the probe pin with your fingernail well before it reaches the bed.
+
+The Z movement must stop immediately. It may probe a second time, so be ready to trigger it again. Klipper explicitly recommends this finger-trigger test before allowing a newly configured BLTouch to touch the bed. ([Klipper Documentation][4])
+
+After that succeeds, run a normal:
+
+```gcode
+G28
+```
+
+## 9. Repeat the accuracy test
+
+Use:
+
+```gcode
+G90
+G1 X189 Y117 Z10 F6000
+PROBE_ACCURACY SAMPLES=20 PROBE_SPEED=1.0 SAMPLE_RETRACT_DIST=2.0 LIFT_SPEED=5.0
+```
+
+Because this is now a native `[bltouch]` setup, Klipper—not your servo macros—will generate the correct deployment, stow and reset commands between measurements.
+
+Interpret the new result:
+
+* `≤0.025 mm`: proceed to Z-offset calibration.
+* `0.025–0.050 mm`: still marginal.
+* `>0.050 mm`: likely a defective/sticky 3DTouch, unstable wiring, or Z-axis mechanical movement.
+* Around `0.18–0.20 mm` again: the probe itself is the leading suspect.
+
+Do not add high `samples_tolerance` values or average many samples to hide this variation. Your readings vary randomly by almost a full normal first-layer height; averaging them would not produce dependable bed compensation.
+
+[1]: https://www.klipper3d.org/zh/Probe_Calibrate.html "探针校准 - Klipper 文档"
+[2]: https://www.klipper3d.org/G-Codes.html "G-Codes - Klipper documentation"
+[3]: https://www.klipper3d.org/it/Config_Reference.html "Riferimenti configurazione - Documentazione Klipper"
+[4]: https://www.klipper3d.org/BLTouch.html "BL-Touch - Klipper documentation"

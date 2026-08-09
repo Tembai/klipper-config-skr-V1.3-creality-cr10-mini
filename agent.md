@@ -6,7 +6,7 @@ Hardware:
 # Notes for future agent sessions
 
 ## Access
-- Printer host: `192.168.1.219`, user `pi`. See `ssh_details.txt` for credentials (gitignored, not in repo).
+- Printer host: `192.168.1.222` (`.219` was previously used but is unreachable from this sandbox — the pi's IP appears to have changed), user `pi`. See `ssh_details.txt` for credentials (gitignored, not in repo).
 - SSH via paramiko in Python, with `allow_agent=False, look_for_keys=False` — the local SSH agent key doesn't work in the sandbox, password auth is required.
 - OctoPrint runs on the pi and only binds `127.0.0.1:5000` — reach it via `curl` executed over SSH, not directly from this machine. API key is in `ssh_details.txt`.
 - Prefer OctoPrint's REST API (`/api/printer/command` for gcode, `/api/printer` for status, `/api/files` + `/api/job` for print control) over any custom direct-socket script (e.g. a `klipper_client.py` on the pi talking to `/tmp/klippy_uds`). The direct socket becomes unreliable (hangs/PipeTimeout) once OctoPrint's own web UI is open and connected — OctoPrint's own REST API doesn't have this problem since it's OctoPrint's established connection.
@@ -29,4 +29,22 @@ Hardware:
 ## Workflow gotchas
 - Don't create ad-hoc temp scripts inside this git repo for SFTP staging — if you must, delete them again once done (a `.tmp_*` file was left behind in a previous session and had to be cleaned up).
 - `ssh_details.txt` and `lazygit.exe` are gitignored; don't try to track or reference their contents as if they were committed.
+- `/tmp/klippy.log` on the pi accumulates config dumps across every restart. A naive `grep | tail` can show a mix of old and new values. Use `tac /tmp/klippy.log | grep -m1 -B2 -A2 '<setting>'` to reliably read only the most recent restart's values.
+- Before sending `RESTART`, check the print is idle via OctoPrint's `/api/job` (`state` should be `Operational`), not just assumed.
+
+## 2026-08-09 session: stringing/adhesion fix (Klipper motion limits + OrcaSlicer settings + PA)
+- Symptom: severe uniform stringing and poor first-layer adhesion with OrcaSlicer, despite a known-good Cura 4.13.1 "CR10 Mini" profile working fine previously.
+- Root cause investigation: compared the OrcaSlicer profile against Cura/Marlin's stock CR-10 Mini defaults (via Cura's `creality_base.def.json`/`creality_cr10mini.def.json` on GitHub). Found several mismatches:
+  - Retraction was only 4.5mm (stock Cura/Marlin is ~6.5mm at 40-45mm/s).
+  - Klipper's `[printer]` motion limits (`max_velocity: 100`, `max_accel: 800`, `max_z_accel: 80`, `square_corner_velocity: 2.0`) didn't match stock Marlin limits and were silently clipping travel moves — in particular OrcaSlicer's travel speed was set to 350mm/s, more than 2x both Cura's stock 150mm/s and Klipper's (old) 100mm/s ceiling, causing a timing/dynamics mismatch between what the slicer calculated for retraction-during-travel and what Klipper actually executed.
+  - Updated `printer.cfg`: `max_velocity: 150`, `max_accel: 500`, `max_z_accel: 100`, `square_corner_velocity: 5.0`, added `max_extrude_only_velocity: 50` / `max_extrude_only_accel: 5000` to `[extruder]` — all matched to stock Marlin CR-10 Mini values. Deployed and verified 0 config errors.
+- OrcaSlicer uses PrusaSlicer/Bambu-derived UI terminology, NOT Cura's — many settings are hidden unless the settings-panel mode dropdown is switched from Simple to Advanced/Expert. Verified exact field names/locations via the official wiki (`github.com/OrcaSlicer/OrcaSlicer/wiki`):
+  - Printer Settings > Extruder > Retraction: Length, Retraction speed, **Deretraction speed** (`deretraction_speed`, 0 = same as retraction speed), **Travel distance threshold** (`retraction_minimum_travel` = Cura's `retraction_min_travel`, set to 1.5mm).
+  - Printer Settings > Extruder > Z Hop: **Z-hop type** "Normal Lift" = Cura's plain vertical lift (already correct, no change needed); Z-hop height (`z_hop`) is low-priority/low-impact, 0.2-0.4mm both fine.
+  - Process Settings > Others > Skirt: the Cura "skirt gap" equivalent is **Distance** (`skirt_distance`), set to 10mm; Loops (`skirt_loops`) = 3 matches Cura's `skirt_line_count`.
+  - Process Settings > Strength > Infill (Advanced mode): Cura's "infill overlap" equivalent is **Infill Wall Overlap** (`infill_wall_overlap`), set to 30% to match Cura.
+  - Cura's "avoid crossing perimeters"/combing and `travel_retract_before_outer_wall` have **no direct Orca equivalent/toggle** — Orca handles travel routing and pre-wall retraction internally; these were skipped rather than forced.
+  - Process Settings > Speed > Travel: **Travel speed** lowered from 350mm/s to 150mm/s to match Klipper's `max_velocity` and Cura's stock value.
+- After applying the above, a PA pattern test print showed a large improvement in quality (much better than before). Read the PA value off the printed pattern: test range was 0 to 1.2 in 0.05 steps (25 lines), user picked the second-to-last line = **1.15**. Set `pressure_advance: 1.15` in `[extruder]`, deployed, confirmed live via klippy.log.
+- Net result: this combination (retraction length/travel-speed/motion-limit alignment with stock Marlin/Cura defaults + PA=1.15) fixed the stringing/adhesion regression. If tuning further, prefer keeping Klipper's `[printer]` motion limits in sync with whatever travel/print speeds are set in the slicer, rather than letting Klipper silently clip them.
 

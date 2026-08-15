@@ -29,6 +29,18 @@ print is run or a config value affecting print quality is tweaked.
 | V2 | `pa_pattern_100_500_..._17m9s_V2.gcode` | 2026-08-09 21:57:55 -> 22:17:45 | 0 - 1.2, step 0.05 | 1.15 | 150 | 80 | conservative/original (pre-`16dc98a`, committed later that night) | GOOD |
 | V3-V4 (unlabeled) | `pa_pattern_100_500_..._22m24s.gcode` | 2 cancelled attempts 23:52:08 & 23:52:42, real print 2026-08-11 23:56:36 -> 2026-08-12 00:25:56 | 0.3 - 0.92, step 0.02 | 0.62 | 150 | 100 (boosted, `16dc98a`) | boosted (`16dc98a`, unreverted; `31454ad` committed 6 min before print) | BAD |
 | V5 | `pa_pattern_100_3000_..._22m2s_V5.gcode` | 2026-08-12 22:26:08 -> 22:54:27 | 0.3 - 0.92, step 0.02 | 0.5 | 150 | 100 (still boosted) | reverted (`04c5afa`, 12 min before print) | BAD, "slightly worse" than V3-V4 per user |
+| V6 (re-print of V5 file) | `pa_pattern_100_3000_..._22m2s_V5.gcode` | 2026-08-15 (see octoprint.log for exact timestamps) | 0.3 - 0.92, step 0.02 | **0.52** | 150 | **80 (reverted)** | reverted (`04c5afa`) + fresh 10x10 bed mesh + screws_tilt_adjust fix | **GOOD - best print so far by a large margin.** Nearly all of the pattern adhered properly; only one small spot with imperfect intra-layer adhesion (down from widespread fusion failure in V3-V5). Some stringing still present. |
+
+## Root cause conclusion (as of 2026-08-12/13 investigation, CONFIRMED 2026-08-15)
+
+**Confirmed by the V6 re-print on 2026-08-15:** reverting `max_z_accel` from 100
+back to 80 (combined with the corrected screws_tilt_adjust coordinates and a
+finer 10x10 bed mesh) fixed the intra-layer fusion regression. V6 was by far
+the best print in this whole series - only one small adhesion spot remained,
+vs. widespread failure across V3-V5. `max_z_accel: 100` is confirmed as the
+root cause (not bed topology, not PA value itself). Remaining known issue:
+some stringing is still present - candidate for a future retraction/print-speed
+tuning pass (not yet started).
 
 ## Root cause conclusion (as of 2026-08-12/13 investigation)
 
@@ -40,12 +52,11 @@ to 100 (both bad prints) and was never reverted for either bad print, despite
 `max_z_accel: 100` (vs the original `80`) the leading suspect for the
 intra-layer line fusion/adhesion regression.
 
-**Status: `max_z_accel` has since been reverted back to 80 in printer.cfg
-(bundled with the 2026-08-13 bed_mesh/screws_tilt_adjust changes), but this
-revert has NOT yet been validated by a new test print.** The next PA test
-print run should specifically confirm whether reverting `max_z_accel` restores
-V1/V2-quality adhesion. Add the result as a new row above when that print is
-done.
+**Status: CONFIRMED by the V6 re-print on 2026-08-15 (see updated conclusion
+above the table).** `max_z_accel` was reverted back to 80 in printer.cfg
+(bundled with the 2026-08-13 bed_mesh/screws_tilt_adjust changes), and the
+revert is now validated - V1/V2-quality adhesion has been restored (with only
+one minor spot remaining, a large improvement over V3-V5).
 
 ## Known confound: bed mesh resolution
 

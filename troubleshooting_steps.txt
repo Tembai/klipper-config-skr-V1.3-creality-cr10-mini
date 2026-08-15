@@ -362,6 +362,8 @@ Raise the gantry manually first with the printer powered off, so the nozzle is f
 
 Run:
 
+
+
 ```gcode
 BLTOUCH_DEBUG COMMAND=pin_down
 BLTOUCH_DEBUG COMMAND=touch_mode
@@ -445,3 +447,106 @@ Do not add high `samples_tolerance` values or average many samples to hide this 
 [2]: https://www.klipper3d.org/G-Codes.html "G-Codes - Klipper documentation"
 [3]: https://www.klipper3d.org/it/Config_Reference.html "Riferimenti configurazione - Documentazione Klipper"
 [4]: https://www.klipper3d.org/BLTouch.html "BL-Touch - Klipper documentation"
+
+================================================================================
+2026-08-14 / 2026-08-15: SCREWS_TILT_CALCULATE crashed the nozzle into the bed
+(coordinate bug, NOT a BLTouch hardware fault)
+================================================================================
+
+## Symptom
+
+Added a `[screws_tilt_adjust]` section (2026-08-13) to get quick 4-corner screw
+turn advice via `SCREWS_TILT_CALCULATE`. Running `G28` then
+`SCREWS_TILT_CALCULATE` remotely crashed the nozzle straight into the glass bed,
+with the BLTouch pin ending up hanging off the edge of the bed at the same
+physical spot every time. This happened 3 separate times across two different
+sessions (once with the original screw coordinates, once after a first
+attempted fix, and once more after asking the user to power-cycle the printer).
+The user had to kill power to the printer twice to stop the crash.
+
+## First (WRONG) hypothesis: screw coordinates exceed the safe/reachable area
+
+The original config copied `[bed_screws]`'s coordinates directly:
+`screw1: 30,30 / screw2: 270,30 / screw3: 30,210 / screw4: 270,210`. Since
+`x_offset: -37.0` and the probe needs `nozzle_x = target_x + 37` to land on a
+given target (so reasoned at the time), `screw2`/`screw3`/`screw4` at X=270
+would need nozzle X=307 - past `stepper_x`'s `position_max: 300` and off the
+physical glass. Coordinates were tightened to stay within the already-proven-
+safe `[bed_mesh]` bounds (`mesh_min: 20,20` / `mesh_max: 250,205`): `screw2:
+240,30 / screw3: 240,195 / screw4: 30,195`. Deployed and verified live via
+klippy.log.
+
+**This did not fix it.** The crash recurred identically, including at
+`screw1: 30,30` - a corner well inside the "safe" bounds and a coordinate that
+was never touched by the fix above. This should have been the tell that the
+reachability theory was wrong.
+
+## Second (ALSO WRONG) hypothesis: BLTouch hardware fault
+
+After the coordinate fix didn't help, and the crash reproduced identically
+(same "no trigger" style failure) on a clean retry after a full printer
+power-cycle, it was wrongly concluded that the BLTouch had a genuine,
+reproducible hardware/firmware fault causing it to fail to trigger. Both
+`[screws_tilt_adjust]` and `[gcode_macro BED_MESH_CALIBRATE_FULL]` were
+disabled and `stepper_z`'s `position_min` was tightened from -5 to -1.5mm as a
+crash-depth backstop, pending "physical hardware diagnosis."
+
+**This was also wrong.** The user pointed out the probe triggers correctly
+when pressed by hand, and that the probe hung off the bed at the exact same
+place every single time - which is a strong signal of a deterministic
+coordinate bug, not a random/intermittent hardware fault.
+
+## Actual root cause: screws_tilt_adjust needs NOZZLE coordinates, not probe-target coordinates
+
+Per Klipper's own docs (Config_Reference.html#screws_tilt_adjust): "screw1: X, Y
+- ...This is a position to command the **nozzle** to, so that the **probe** is
+directly above the bed screw." Unlike `[bed_mesh]` (whose `mesh_min`/`mesh_max`
+ARE probe-relative and auto-adjusted internally by Klipper), `screws_tilt_adjust`
+does **not** auto-apply the probe's `x_offset`/`y_offset` - the config author
+must already have computed the nozzle position that puts the probe over the
+target.
+
+The bug: `[bed_screws]`'s coordinates (30,30 / 270,30 / 30,210 / 270,210) are
+correctly meant as direct nozzle-over-screw positions for that module (no probe
+involved in a manual paper test). These were copied straight into
+`[screws_tilt_adjust]` with no offset adjustment at all. With `x_offset: -37.0`,
+`y_offset: -7.0`, commanding the nozzle to (30,30) puts the probe at
+`(30-37, 30-7) = (-7, 23)` - off the bed to the left, at X=-7. Since screw1 was
+never changed across "fixes," this same wrong probe position (-7,23) was
+computed identically every single attempt, exactly matching the user's
+observation of the probe hanging off the bed at the same spot every time. Z then
+kept lowering with no floor to trigger against until the nozzle hit the bed.
+
+## Fix (2026-08-15)
+
+Re-derived `screw1..4` as NOZZLE coordinates = desired probe target + offset:
+- Desired probe targets (same corners already proven safe via bed_mesh):
+  (30,30), (250,30), (250,205), (30,205)
+- Nozzle offset for this probe: +37 X, +7 Y
+- Resulting config: `screw1: 67,37 / screw2: 287,37 / screw3: 287,212 /
+  screw4: 67,212` - all within `stepper_x`/`stepper_y` position_max (300/220).
+
+`[screws_tilt_adjust]` and `BED_MESH_CALIBRATE_FULL` were both re-enabled
+(bed_mesh's mesh_min/mesh_max were never buggy - only screws_tilt_adjust's
+raw/unconverted coordinates were). `stepper_z position_min` was kept at -1.5mm
+(tightened from -5) as cheap defense-in-depth, independent of this fix.
+
+## Lesson for next time
+
+- Different Klipper leveling/calibration modules have DIFFERENT coordinate
+  conventions: `[bed_mesh]` mesh_min/mesh_max and `[axis_twist_compensation]`
+  calibrate_* are probe-relative (Klipper auto-adjusts). `[bed_screws]`,
+  `[screws_tilt_adjust]`, `[bed_tilt]` points, `[z_tilt]` points, and
+  `[quad_gantry_level]` points are all **nozzle** coordinates - the offset must
+  be applied manually by whoever writes the config. Never assume one module's
+  coordinate convention carries over to another; check the docs for each.
+- A crash that recurs at the EXACT SAME physical spot every time, unaffected by
+  supposedly-fixing changes to other coordinates, is a strong signal of a
+  deterministic math/config bug - not an intermittent hardware fault. Don't
+  jump to "hardware fault" as a conclusion without first re-deriving the
+  relevant coordinate math from the actual Klipper docs.
+- NEVER remotely retry a probe-based command (`G28`, `SCREWS_TILT_CALCULATE`,
+  `BED_MESH_CALIBRATE`, `PROBE_ACCURACY`) more than once after it fails/crashes
+  without stopping to properly root-cause it. Two "fixes" were deployed and
+  retried unsupervised before the real bug was found, causing the same crash a
+  total of 3 times and requiring the user to kill power twice.

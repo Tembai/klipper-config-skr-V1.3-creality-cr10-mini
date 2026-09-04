@@ -30,6 +30,7 @@ print is run or a config value affecting print quality is tweaked.
 | V3-V4 (unlabeled) | `pa_pattern_100_500_..._22m24s.gcode` | 2 cancelled attempts 23:52:08 & 23:52:42, real print 2026-08-11 23:56:36 -> 2026-08-12 00:25:56 | 0.3 - 0.92, step 0.02 | 0.62 | 150 | 100 (boosted, `16dc98a`) | boosted (`16dc98a`, unreverted; `31454ad` committed 6 min before print) | BAD |
 | V5 | `pa_pattern_100_3000_..._22m2s_V5.gcode` | 2026-08-12 22:26:08 -> 22:54:27 | 0.3 - 0.92, step 0.02 | 0.5 | 150 | 100 (still boosted) | reverted (`04c5afa`, 12 min before print) | BAD, "slightly worse" than V3-V4 per user |
 | V6 (re-print of V5 file) | `pa_pattern_100_3000_..._22m2s_V5.gcode` | 2026-08-15 (see octoprint.log for exact timestamps) | 0.3 - 0.92, step 0.02 | **0.52** | 150 | **80 (reverted)** | reverted (`04c5afa`) + fresh 10x10 bed mesh + screws_tilt_adjust fix | **GOOD - best print so far by a large margin.** Nearly all of the pattern adhered properly; only one small spot with imperfect intra-layer adhesion (down from widespread fusion failure in V3-V5). Some stringing still present. |
+| V7 | `pa_pattern_100_3000_..._12m27s.gcode` | 2026-09-04 (metadata timestamp 19:08 local) | 0 - 1.0, step 0.05 | not applied | 150 | 80 | unchanged motion limits vs V6, but new slicer profile: 210/60 temps and `filament_max_volumetric_speed=18` | BAD for underextrusion/intra-layer adhesion; print quality regressed vs V6 |
 
 ## Root cause conclusion (as of 2026-08-12/13 investigation, CONFIRMED 2026-08-15)
 

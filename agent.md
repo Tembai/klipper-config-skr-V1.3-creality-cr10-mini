@@ -43,6 +43,10 @@ Hardware:
   - [pa_pattern_test_log.md](pa_pattern_test_log.md) — table of every PA test print, the exact firmware/slicer config live at print time, and the physical result. Add a new row whenever a PA test print is run.
   - This file (agent.md) — one dated session entry per session, high-level summary + pointers into the other two files for detail.
 
+## 2026-08-22 session: final flow-ratio sync and repo update
+- Synced the repo copy used by the printer to the current config state and finalized the current profile on a flow ratio of `1.00` for the final calibration pass.
+- Kept the printer on the mechanical Z microswitch setup with the final verified `pressure_advance: 0.52` value; the repo commit message records the flow-ratio change explicitly so it is visible in GitHub history.
+
 ## 2026-08-15 session (continued): bed mesh recalibration completed + PROBE_ACCURACY statistical validation
 - Deployed the screws_tilt_adjust fix and re-enabled `BED_MESH_CALIBRATE_FULL` (see previous session entry below), then ran it live with the user standing by at the power switch. Confirmed genuine completion (not just a fixed-sleep guess) via all three checks from the 2026-08-10 lesson: probe count reached 300/300 (10x10 grid x bltouch `samples: 3`), `printer.cfg` mtime updated, and the `#*# points =` data changed from the prior mesh.
 - Ran `PROBE_ACCURACY SAMPLES=30` at bed center (135,112) afterward as a one-off noise-floor diagnostic (NOT something that needs repeating routinely - only re-run it if probe/hardware is suspected to have degraded). **Important gotcha discovered:** `PROBE_ACCURACY` does NOT go through the probe's `samples`/`samples_result` median filtering - `grep -c 'probe at <x>,<y>'` showed exactly `SAMPLES=30` raw touches, so it measures true single-touch noise (sigma=62.4um here), not the filtered per-mesh-point noise that `BED_MESH_CALIBRATE` actually stores (estimated ~45um via the asymptotic median-of-3 factor, 0.7236x raw sigma).
